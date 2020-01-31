@@ -7,7 +7,9 @@ setup(
     author_email="steve@work.renlabs.com",
     description="Log data from local w1 busses to a cloud endpoint",
     classifiers=[
-        "License :: OSI Approved :: BSD"
+        "Programming Language :: Python :: 3",
+        "Operating System :: POSIX :: Linux",
+        "License :: OSI Approved :: MIT License"
     ],
     zip_safe=True,
     entry_points = {
