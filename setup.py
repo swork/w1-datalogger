@@ -1,7 +1,7 @@
 from setuptools import setup, find_packages
 setup(
     name="w1-datalogger",
-    version="0.1.2",
+    version="0.1.3",
     packages=find_packages(),
     author="Steve Work",
     author_email="steve@work.renlabs.com",
@@ -13,7 +13,7 @@ setup(
     ],
     zip_safe=True,
     install_requires = [
-        "requests"
+        "requests>=2,<3"
     ],
     entry_points = {
         "console_scripts": [
