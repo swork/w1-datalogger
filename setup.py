@@ -1,7 +1,7 @@
 from setuptools import setup, find_packages
 setup(
     name="w1-datalogger",
-    version="0.1.1",
+    version="0.1.2",
     packages=find_packages(),
     author="Steve Work",
     author_email="steve@work.renlabs.com",
@@ -12,6 +12,9 @@ setup(
         "License :: OSI Approved :: MIT License"
     ],
     zip_safe=True,
+    install_requires = [
+        "requests"
+    ],
     entry_points = {
         "console_scripts": [
             "w1logger = w1datalogger.logger:main",
