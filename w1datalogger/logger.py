@@ -13,17 +13,17 @@ class W1Logger:
     def LogStartup(self):
         msg = {
             "isotime": isotime(),
-            "uptime": subprocess.check_output("uptime")
+            "uptime": subprocess.check_output("uptime").decode('utf-8')
         }
         requests.post(self.config.endpoint, json=msg, timeout=30)
 
     def LogStatus(self):
         msg = {
             "isotime": isotime(),
-            "uptime": subprocess.check_output("uptime", shell=True),
-            "free": subprocess.check_output("free", shell=True),
-            "df": subprocess.check_output("df", shell=True),
-            "netstat-an": subprocess.check_output("netstat -an", shell=True),
+            "uptime": subprocess.check_output("uptime", shell=True).decode('utf-8'),
+            "free": subprocess.check_output("free", shell=True).decode('utf-8'),
+            "df": subprocess.check_output("df", shell=True).decode('utf-8'),
+            "netstat-an": subprocess.check_output("netstat -an", shell=True).decode('utf-8'),
         }
         requests.post(self.config.endpoint, json=msg, timeout=30)
 
@@ -36,14 +36,14 @@ class W1Logger:
         with os.scandir(devices_link_dir) as d:
             for entry in d:
                 if entry.is_symlink():
-                    devices_links.append(entry_name)
+                    devices_links.append(entry.name)
 
         for link in devices_links:
             datapoints = dict()
             datapoints[os.path.join(link, "w1_slave")] = os.path.join(devices_link_dir, link, "w1_slave")
 
         for datapoint in sorted(datapoints.keys()):
-            with open(os.path.join(devices_links_dir, datapoints[datapoint]), "r") as point:
+            with open(os.path.join(devices_link_dir, datapoints[datapoint]), "r") as point:
                 msg[datapoint] = {
                     "isotime": isotime('milliseconds'),
                     "value": point.read()
@@ -53,15 +53,26 @@ class W1Logger:
         requests.post(self.config.endpoint, json=msg, timeout=30)
 
 class Config:
-    def __init__(self, config_blob):
-        self.config_blob = config_blob
-        self.config = None
+    def __init__(self, config_filename):
+        self.config_filename = config_filename
+        self._config = None
+
+    @property
+    def config(self):
+        if self._config is None:
+            while len(self.config_filename) > 1:
+                try:
+                    with open(self.config_filename, "r") as f:
+                        self._config = json.load(f)
+                        break
+                except IOError:
+                    head, tail = os.path.split(self.config_filename)
+                    head_head, _ = os.path.split(head)
+                    self.config_filename = os.path.join(head_head, tail)
+        return self._config
 
     @property
     def endpoint(self):
-        if self.config is None:
-            with open(self.config_blob.config, "r") as f:
-                self.config = json.load(f)
         return self.config['Post']
 
 def main():
