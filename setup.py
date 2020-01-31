@@ -1,7 +1,7 @@
 from setuptools import setup, find_packages
 setup(
     name="w1-datalogger",
-    version="0.1.3",
+    version="0.5.0",
     packages=find_packages(),
     author="Steve Work",
     author_email="steve@work.renlabs.com",
