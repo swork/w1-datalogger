@@ -42,12 +42,14 @@ class W1Logger:
             datapoints = dict()
             datapoints[os.path.join(link, "w1_slave")] = os.path.join(devices_link_dir, link, "w1_slave")
 
+        msg['datapoints'] = datapoint_list = list()
         for datapoint in sorted(datapoints.keys()):
             with open(os.path.join(devices_link_dir, datapoints[datapoint]), "r") as point:
-                msg[datapoint] = {
+                datapoint_list.append({
                     "isotime": isotime('milliseconds'),
+                    "key": datapoint,
                     "value": point.read()
-                }
+                })
 
         msg["scan_end"] = isotime('milliseconds')
         requests.post(self.config.endpoint, json=msg, timeout=30)
