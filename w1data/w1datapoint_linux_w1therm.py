@@ -1,4 +1,5 @@
-from w1data import W1Datapoint
+import re
+from w1datapoint import W1Datapoint
 
 class W1Datapoint_Linux_w1therm(W1Datapoint):
     """

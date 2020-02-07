@@ -40,32 +40,34 @@ import sys, os, re, argparse, json
 from datetime import datetime
 import dateutil.parser
 from dateutil import relativedelta
-import numpy, table
+import numpy, tables
 from sortedcontainers import SortedDict
 from w1datapoint import W1Datapoint
 from w1datapoint_linux_w1therm import W1Datapoint_Linux_w1therm
-from rollup import RollupCollection
 
 s3_re = re.compile(r'^s3:// (?P<bucket>[^/]+) /? (?P<key>.*?)$', re.X)
 
-class Observation:
-    handlers = {}
+def location_is_s3(location):
+    return s3_re.match(location)
 
-    @classmethod
-    def register_datapoint_handler(cls, w1_type_str, obsCls):
-        cls.handlers[w1_type_str] = obsCls
+class Observation:
+    _handlers = {}
 
     def __init__(self, isotime_str, key, value):
         self.time_struct = dateutil.parser.isoparse(isotime_str)
         self.time_key = self.time_struct.timestamp()
         type_str, _ = key.split('-')
         try:
-            self.datapoint = self.handlers[type_str](value)
+            self.datapoint = self._handlers[type_str](value)
         except KeyError:
             raise W1Datapoint.ItAintMe()
 
     def __lt__(self, other):
         return self.time_key < other.time_key
+
+    @classmethod
+    def register_datapoint_handler(cls, w1_type_str, obsCls):
+        cls._handlers[w1_type_str] = obsCls
 
 class Observations:
     w1s_re = re.compile(r'^28-(?P<ser>[a-zA-Z0-9])+/w1_slave$')
@@ -213,20 +215,20 @@ class Observations:
         blob = json.load(infile)
         return self.process_w1logger_json(blob)
 
-    def process_w1logger_dir(self, raw_location=self.raw_location, skippers=None):
+    def process_w1logger_dir(self, skippers=None):
         """Read in all bare observation files in a named dir.
 
         skippers specifies optionally skipping specific time ranges.
         """
-        mo = s3_re.match(raw_location)
+        mo = s3_re.match(self.raw_location)
         if mo:
             raise RuntimeError("not yet implemented")
 
-        print("raw_location:{}".format(raw_location))
-        entries = os.scandir(raw_location)
+        print("raw_location:{}".format(self.raw_location))
+        entries = os.scandir(self.raw_location)
         for entry in entries:
             if not self.skip_observation_by_filename(entry.name, skippers):
-                self.process_w1logger_file(open(os.path.join(raw_location, entry), "r"))
+                self.process_w1logger_file(open(os.path.join(self.raw_location, entry), "r"))
 
     def skip_observation_by_filename(self, basename, skippers):
         isotime, entry_event = basename.split(';')
@@ -236,44 +238,8 @@ class Observations:
                 return True
         return False
 
-def do_rollup(rollup_location, raw_location):
-    print("do_rollup(rollup_location:{}, raw_location:{})".format(rollup_location, raw_location))
-    Observation.register_datapoint_handler("28", W1Datapoint_Linux_w1therm)
-    rollup_collection = RollupCollection(rollup_location)
-    observations = Observations()
-    observations.process_w1logger_dir(raw_location, rollup_collection.get_ranges())
-    return rollup_collection.update(observations)
-
-def cli_rollup():
-    """
-    Maintain a dir of monthly rollup JSON blobs from dir of raw observation JSON blobs
-    """
-    p = argparse.ArgumentParser()
-    p.add_argument('--debug', '-d', action='store_true')
-    p.add_argument('rollup_location')
-    p.add_argument('raw_location')
-    a = p.parse_args()
-    return do_rollup(a.rollup_location, a.raw_location)
-
-
-def main():
-    """
-    CLI operation
-    """
-    p = argparse.ArgumentParser()
-    p.add_argument('--debug', '-d', action='store_true')
-    p.add_argument('--rollup', nargs=1)
-    p.add_argument('--plot', action='store_true')
-    p.add_argument('--update_database', action='store_true')
-    p.add_argument('input', nargs='?', const='-')
-    a = p.parse_args()
-
-    Observation.register_datapoint_handler("28", W1Datapoint_Linux_w1therm)
-    observations = Observations()
-
-    if a.rollup:
-        sys.exit(do_rollup(a.rollup[0], a.input))
-
+if __name__ == '__main__':
+  if False:  # saving some old code here
     infile = None
     if a.input == '-':
         observations.process_w1logger_file(sys.stdin)
@@ -305,6 +271,3 @@ def main():
         print(rollup); sys.exit(0)
 
     return 0
-
-if __name__ == '__main__':
-    sys.exit(main())
