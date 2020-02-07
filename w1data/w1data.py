@@ -1,48 +1,52 @@
 #! /usr/bin/env python3
 
+"""A w1logger data collecting gizmo is assigned an endpoint UUID. That maps to a
+key prefix in the AWS bucket observations.ste.vework.org, and should be changed
+when the configuration of sensors on the data collecting gizmo changes.
+
+Associated with it is a map from sensor IDs (in Linux w1 format, like
+"28-01234567") to sensor metadata, primarily a name. This'll be in file
+key/METADATA.json along with other metadata related to the endpoint UUID and
+associated gizmo.
+
+Observations are JSON objects in files named for the UTC isotime of collection
+and the AWS event ID supplied as context to AWS Lambda, separated by a
+semicolon. Their format is discussed elsewhere. These observations accumulate
+as frequently and as long as the data collection gizmo arranges.
+
+So there might be several endpoint UUIDs (top-level key prefixes in
+s3://observations.ste.vework.org/), some overlapping in time (when two or more
+gizmos were operating simultaneously) and some disjoint in time (a gizmo gets
+reconfigured and assigned a new endpoint UUID, or one gizmo dies and another
+takes its place - again, with a new endpoint UUID).
+
+To transition these datapoints into the problem domain and to reduce the
+processing involved in working with them, we have a monthly rollup for each
+sensor named in metadata. (This might be different sensors with different
+hardware serial numbers at different times via different endpoints; similarly
+the same sensor might appear in metadata for different datapoints via different
+endpoints at disjoint times.) Each rollup is a file named for the datastream
+(not for the sensor but for the quantity the sensor was measuring) and for the
+calendar year and month of observations it contains.
+
+Rollups are the end result of w1-datalogger processing, and the starting point
+for actual consumption of the data they contain. They are updated
+asynchronously with respect to data gathering, idempotently (but with heuristic
+assumptions for performance) and lazily, driven by data consumers' demands. If
+nobody asks about the data, observations accumulate and rollups go untouched.
+"""
+
 import sys, os, re, argparse, json
 from datetime import datetime
 import dateutil.parser
 from dateutil import relativedelta
 import numpy, table
+from sortedcontainers import SortedDict
+from w1datapoint import W1Datapoint
+from w1datapoint_linux_w1therm import W1Datapoint_Linux_w1therm
+from rollup import RollupCollection
 
-class W1Datapoint:
-    class ItAintMe(ValueError):
-        pass
-    def __init__(self):
-        pass
-
-class W1Datapoint_Linux_w1therm(W1Datapoint):
-    """
-    String from type-28 (therm sensor) w1slave pseudofile, parsed. If the
-    w1therm Linux kernel module is loaded the result includes that line parsed;
-    else we calculate the temperature from the raw sensor data (TBD).
-    """
-    w1therm_value_re = re.compile(r'''
-    ^
-    (?P<raw> ([0-9a-fA-F]{2} \s){9})
-    \s* : \s*
-    crc=(?P<crc_value> [0-9a-fA-F]{2}) \s*
-    (?P<crc_ok> NO|YES)
-    \s* \n
-    (?P<w1therm_driver_result>
-      (?P<raw2> ([0-9a-fA-F]{2} \s*){9})
-      t = (?P<temp> \d+) \s*
-    )?
-    ''', re.X | re.M)
-
-    def __init__(self, w1_string):
-        mo = self.w1therm_value_re.match(w1_string)
-        if not mo:
-            raise W1Datapoint.ItAintMe("regex match failure")
-        super().__init__()
-        self.w1therm_string = w1_string
-        self.consistent = mo.group('crc_ok') == 'YES'
-        if mo.group('temp'):
-            self.temp = float(mo.group('temp')) / 1000
-        else:
-            # calculate temp from raw data. TBD
-            raise RuntimeError("temp calc from raw sensor data is not yet implemented")
+s3_re = re.compile(r'^s3:// (?P<bucket>[^/]+) /? (?P<key>.*?)$', re.X)
 
 class Observation:
     handlers = {}
@@ -64,7 +68,6 @@ class Observation:
         return self.time_key < other.time_key
 
 class Observations:
-    s3_prefix = 's3://'
     w1s_re = re.compile(r'^28-(?P<ser>[a-zA-Z0-9])+/w1_slave$')
     v1watershed = dateutil.parser.isoparse('2020-02-03T08:20:03+00:00')
 
@@ -72,7 +75,7 @@ class Observations:
         pass
 
     def __init__(self, rollup_location=None, raw_location=None):
-        self.observations = dict()
+        self.observations = SortedDict()
         self.rollup_location = rollup_location
         self.raw_location = raw_location
         pass
@@ -210,32 +213,13 @@ class Observations:
         blob = json.load(infile)
         return self.process_w1logger_json(blob)
 
-    def process_w1logger_dir(self, raw_location, skippers=None):
+    def process_w1logger_dir(self, raw_location=self.raw_location, skippers=None):
         """Read in all bare observation files in a named dir.
 
-        skippers specifies optionally skipping specific time ranges:
-
-         - a list of ranges
-         - each of which is a begin/end pair
-         - each of which is a datetime object,
-           + or a (datetime, event_string) tuple,
-           + or a (datetime, (event1, event2, ...)) tuple.
-
-        (event strings are needed to safely handle unlikely isotime collisions)
-
-        so [(dateutil.parser.isoparse("2020-01-01T00:00:00"), ("asdf-asdf-sa-asdf","bvcd-grew")],
-            (dateutil.parser.isoparse("2020-01-02T00:00:00"), "sads-gssd-hf-wert")]
-        skips anything recorded on the first full day of January UNLESS the
-        recording falls in the same moment as a range endpoint AND the
-        recording's event ID is NOT in the associated list.
-
-        The event IDs are optional, so a simpler case is [isodate_earlier,
-        isodate_later] - this is safe if the exact isodates aren't a dataset
-        you're augmenting and you can handle some ambiguity about whether the
-        range is inclusive or exclusive.
-
+        skippers specifies optionally skipping specific time ranges.
         """
-        if raw_location[0:len(self.s3_prefix)] == self.s3_prefix:
+        mo = s3_re.match(raw_location)
+        if mo:
             raise RuntimeError("not yet implemented")
 
         print("raw_location:{}".format(raw_location))
@@ -252,74 +236,13 @@ class Observations:
                 return True
         return False
 
-    def skippers_from_rollup_dir(self, rollup_location):
-        skippers = []
-        if rollup_location[0:len(self.s3_prefix)] == self.s3_prefix:
-            raise RuntimeError("not yet implemented")
-        for entry in os.scandir(rollup_location):
-            mo = rollup_direntry_re.match(entry.name)
-            if not mo:
-                continue
-            begin_dt = datetime(year=int(mo.group('year')), month=int(mo.group('month')), utc_offset=0)
-            end_dt = begin_dt + relativedelta(months=1)
-            skippers.append([[begin_dt,], [end_dt,]])
-        return skippers  # TBD: event IDs
-
-    def write_rollups(self):
-        """Rollups idea is gathering individual observation blobs into a list of
-        everything for a calendar month, so reprocessing raw data later is
-        faster/cheaper and storage and transfer costs are lower. Have to do it
-        to find out if these advantages are actually real.
-        """
-        pass
-
-class Skippers:
-    def __init__(self):
-        self._specs = []
-
-    class SkipperSpec:
-        def __init__(self, end_datetime, end_entries, begin_datetime, begin_entries):
-            self._begin = (begin_datetime, begin_entries)
-            self._end = (end_datetime, end_entries)
-
-        def is_skip(self, dt, entry):
-            if dt < begin_datetime:
-                return False
-            if dt == begin_datetime:
-                if entry in begin_entries:
-                    return True
-                return False
-            if dt > end_datetime:
-                return False
-            if dt == end_datetime:
-                if entry in end_entries:
-                    return True
-                return False
-            return True
-
-    def add_skip(self, end_datetime, end_entries=(), begin_datetime=None, begin_entries=()):
-        if begin_datetime is None:
-            begin_datetime = dateutil.parser.isoparse("1970-01-01T00:00:00")
-        if begin_datetime > end_datetime:
-            raise RuntimeError("Skip-range endpoints reversed")
-        ss = SkipperSpec(end_datetime, begin_datetime, end_entries, begin_entries)
-        self._specs.append(ss)
-
-    def is_skip(self, dt, entry):
-        for ss in self._specs:
-            if ss.skip(dt, entry):
-                return True
-        return False
-
 def do_rollup(rollup_location, raw_location):
     print("do_rollup(rollup_location:{}, raw_location:{})".format(rollup_location, raw_location))
     Observation.register_datapoint_handler("28", W1Datapoint_Linux_w1therm)
+    rollup_collection = RollupCollection(rollup_location)
     observations = Observations()
-
-    skippers = observations.skippers_from_rollup_dir(rollup_location)
-    observations.process_w1logger_dir(raw_location, skippers)
-    observations.write_rollups(rollup_location)
-    return 0
+    observations.process_w1logger_dir(raw_location, rollup_collection.get_ranges())
+    return rollup_collection.update(observations)
 
 def cli_rollup():
     """
@@ -369,7 +292,7 @@ def main():
             kn, _ = key.split('/')
             with open('{}.data'.format(kn), "w") as of:
                 of.write("time temp\n")
-                for obs in sorted(observations.observations[key]):
+                for obs in observations.observations[key]:  # "isodate;event" strings
                     of.write("{} {}\n".format(obs.time_key, obs.datapoint.temp))
 
     if a.rollup:
