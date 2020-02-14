@@ -1,12 +1,17 @@
 #! /usr/bin/env python
 
 import argparse, configparser, sys, os
-from rollup import do_rollup
+from . import common, metadata, observations, rollup, w1datapoint
+
+import logging
+logger = logging.getLogger(__name__)
+
+debug_done = False
 
 class LocalArgumentParser(argparse.ArgumentParser):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.add_argument('--debug', '-d', action='store_true')
+        self.add_argument('--debug', '-d', nargs='?', const='all')
         self.add_argument('--config', '-c', default=os.path.expanduser("~/.w1.conf"))
         self.add_argument('--rollup-location', default=None)
         self.add_argument('--raw-location', default=None)
@@ -60,31 +65,27 @@ class LocalArgumentParser(argparse.ArgumentParser):
         a = super().parse_args(*args, **kwargs)
         return self._resolve(a)
 
-def rollup():
+def rollup_command():
     """
     Maintain a collection of monthly rollup JSON blobs from raw observation JSON blobs
     """
+    direct_name = "w1rollup"
+    _, applied_name = os.path.split(sys.argv[0])
     p = LocalArgumentParser()
-    p.add_argument('rollup_command')
+    if applied_name != direct_name:
+        p.add_argument('rollup_command')
     a = p.parse_args()
+    do_debug(a)
 
-    if a.rollup_command != 'rollup':
-        raise RuntimeError("something's goofy with CLI logic")
-    return do_rollup(a.rollup_location, a.raw_location)
+    if a.rollup_location is None or a.raw_location is None:
+        logger.error("Need dirs for raw and rollup data, see --help")
+        sys.exit(64)  # EX_USAGE
 
-def plot():
-    """
-    Generate a GNUPlot rendering of rollup data (or, optionally, raw)
-    """
-    p = LocalArgumentParser()
-    p.add_argument('plot_command')
-    p.add_argument('--raw', action='store_true')
-    a = p.parse_args()
-    if a.plot_command != 'plot':
-        raise RuntimeError("something's goofy with CLI logic")
-    return do_plot(a.rollup_location, a.raw_location, a.raw)
+    return rollup.do_rollup(
+        os.path.expanduser(a.rollup_location),
+        os.path.expanduser(a.raw_location))
 
-def testcli():
+def testcli_command():
     """
     Confidence the CLI is doing the needful
     """
@@ -92,9 +93,31 @@ def testcli():
     p.add_argument('testcli_command')
     p.add_argument('--option', action='store_true')
     a = p.parse_args()
+    do_debug(a)
+
     if a.testcli_command != 'testcli':
         raise RuntimeError("something's goofy with CLI logic")
     print(repr(a))
+
+def do_debug(a):
+    global debug_done
+    if not debug_done:
+        logging.basicConfig(format="%(levelname)s:%(filename)s:%(lineno)d:%(message)s")
+        if a.debug:
+            modules = set(a.debug.split(','))
+            if 'commands' in modules or 'all' in modules:
+                logger.setLevel(logging.DEBUG)
+            if 'common' in modules or 'all' in modules:
+                common.logger.setLevel(logging.DEBUG)
+            if 'metadata' in modules or 'all' in modules:
+                metadata.logger.setLevel(logging.DEBUG)
+            if 'observations' in modules or 'all' in modules:
+                observations.logger.setLevel(logging.DEBUG)
+            if 'rollup' in modules or 'all' in modules:
+                rollup.logger.setLevel(logging.DEBUG)
+            if 'w1datapoint' in modules or 'all' in modules:
+                w1datapoint.logger.setLevel(logging.DEBUG)
+        debug_done = True
 
 def main():
     """
@@ -103,15 +126,13 @@ def main():
     p = LocalArgumentParser()
     p.add_argument('command')
     a = p.parse_args_permissive()
+    do_debug(a)
 
     if a.command == 'rollup':
-        return rollup()
-
-    if a.command == 'plot':
-        return plot()
+        return rollup_command()
 
     if a.command == 'testcli':
-        return testcli()
+        return testcli_command()
 
     sys.stderr.write(argparse.ArgumentError("Unknown command {}".format(a.command)))
     return 64  # EX_USAGE in BSD sysexits, just to pick a standard

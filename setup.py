@@ -1,11 +1,11 @@
 from setuptools import setup, find_packages
 setup(
     name="w1-datalogger",
-    version="0.6.0",
+    version="0.7.0",
     packages=find_packages(),
     author="Steve Work",
     author_email="steve@work.renlabs.com",
-    description="Log data from local w1 busses to a cloud endpoint",
+    description="Log data from local w1 busses to a cloud endpoint; process that data into problem-domain summaries.",
     classifiers=[
         "Programming Language :: Python :: 3",
         "Operating System :: POSIX :: Linux",
@@ -13,11 +13,13 @@ setup(
     ],
     zip_safe=True,
     install_requires = [
-        "requests>=2,<3"
+        "requests>=2,<3",
+        "python-dateutil>=2,<3"
     ],
     entry_points = {
         "console_scripts": [
             "w1logger = w1datalogger.logger:main",
+            "w1rollup = w1data.commands:rollup_command"
         ]
     }
 )
