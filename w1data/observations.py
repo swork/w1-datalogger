@@ -299,48 +299,50 @@ class Observations:
         metadata = metadata_base.copy()
         metadata.update(self.metadata(dirname))
         logger.debug("dirname:{} metadata:{}".format(dirname, metadata))
-        for entry in os.scandir(dirname):
-            if not entry.is_file():
-                continue
-            if not entry.name[-5:] == '.json':
-                continue
-            if entry.name == 'METADATA.json':
-                continue
-
-            abs_filename = os.path.join(dirname, entry.name)
-            try:
-                with open(abs_filename, 'r') as f:
-                    blob_list = json.load(f)
-            except:
-                logger.exception()
-                continue
-
-            for blob in blob_list:
-
-                # w1datalogger includes some logger health info for us to ignore.
-                if 'uptime' in blob:
+        with os.scandir(dirname) as s:
+            for entry in s:
+                if not entry.is_file():
+                    continue
+                if not entry.name[-5:] == '.json':
+                    continue
+                if entry.name == 'METADATA.json':
                     continue
 
+                abs_filename = os.path.join(dirname, entry.name)
                 try:
-                    dps = blob['datapoints']
-                except (KeyError, TypeError):
-                    self.transform1(blob)
-                    dps = blob['datapoints']
-                fallback_time = None
-                for p in dps:
-                    try:
-                        isotime = p['isotime']
-                    except KeyError:
-                        isotime = self.get_fallback_time(blob)
+                    with open(abs_filename, 'r') as f:
+                        blob_list = json.load(f)
+                except:
+                    logger.exception()
+                    continue
+
+                for blob in blob_list:
+
+                    # w1datalogger includes some logger health info for us to ignore.
+                    if 'uptime' in blob:
+                        continue
 
                     try:
-                        p_uuid = p['recording_event']
-                    except KeyError:
-                        p_uuid = uuid.uuid4()
+                        dps = blob['datapoints']
+                    except (KeyError, TypeError):
+                        self.transform1(blob)
+                        dps = blob['datapoints']
+                    fallback_time = None
+                    for p in dps:
+                        try:
+                            isotime = p['isotime']
+                        except KeyError:
+                            isotime = self.get_fallback_time(blob)
 
-                    k = p['key']
+                        try:
+                            p_uuid = p['recording_event']
+                        except KeyError:
+                            p_uuid = uuid.uuid4()
 
-                    yield Observation(isotime, k, p['value'], p_uuid, metadata)
+                        k = p['key']
+
+                        yield Observation(isotime, k, p['value'], p_uuid, metadata)
+
 
     def generate_all(self):
         """Walk subdirs of self.raw_location, yielding Observation instances. Each
@@ -355,10 +357,11 @@ class Observations:
             raise RuntimeError("not yet implemented")
 
         logger.debug("raw_location:{}".format(self.raw_location))
-        for entry in os.scandir(self.raw_location):
-            if entry.is_dir():
-                child_dirname = os.path.join(self.raw_location, entry.name)
-                yield from self.generate_dir(child_dirname, metadata_base)
+        with os.scandir(self.raw_location) as s:
+            for entry in s:
+                if entry.is_dir():
+                    child_dirname = os.path.join(self.raw_location, entry.name)
+                    yield from self.generate_dir(child_dirname, metadata_base)
 
 if __name__ == '__main__':
   if False:  # saving some old code here
