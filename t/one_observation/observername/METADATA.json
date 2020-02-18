@@ -1,0 +1,13 @@
+{
+    "collector": {
+        "endpoint": "observername",
+        "controller": "micro super ultra sbc",
+        "sensors": {
+            "28-011912588b87/w1_slave": {
+                "name": "office_air_temperature",
+                "notes": "On shelf under S-facing window, sometimes in direct sunlight",
+                "hardware": "DS18B20 in steel capsule (2020-12-23)"
+            }
+        }
+    }
+}
